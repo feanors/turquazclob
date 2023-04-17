@@ -11,6 +11,9 @@ import "hardhat/console.sol";
 // This is the main building block for smart contracts.
 contract Settler {
 
+    bytes32 public immutable DOMAIN_SEPARATOR;
+    bytes32 public immutable ORDER_TYPEHASH;
+
     struct Order {
         //version?? or version in future versions ?
         address creator;
@@ -39,6 +42,32 @@ contract Settler {
         bytes32 r;
         bytes32 s;
     }
+
+    constructor() {
+        DOMAIN_SEPARATOR = keccak256(abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256(bytes("Turquaz")),
+            keccak256(bytes("0.1")),
+            43114,
+            address(this)
+        ));
+
+        ORDER_TYPEHASH = keccak256(abi.encodePacked(
+            "Order(",
+            "address creator,",
+            "address settler,",
+            "address requestedToken,",
+            "address releasedToken,",
+            "uint256 requestAmount,",
+            "uint256 releaseAmount,",
+            "uint256 creationTime,",
+            "uint256 expirationTime,",
+            "uint256 randNonce",
+            ")"
+        ));
+    }
+
+    
 
 
     mapping(bytes32 => bool) public settledOrderHashes;
@@ -89,32 +118,28 @@ contract Settler {
         }
     }
 
-    function getMesssageHash(Order memory order) public pure returns (bytes32) {
-        return keccak256(abi.encode(
-            order.creator,
-            order.settler,
-            order.requestedToken,
-            order.releasedToken,
-            order.requestAmount,
-            order.releaseAmount,
-            order.creationTime,
-            order.expirationTime,
-            order.randNonce
+    function getMessageHash(Order memory order) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(
+            "\x19\x01",
+            DOMAIN_SEPARATOR,
+            keccak256(abi.encode(
+                ORDER_TYPEHASH,
+                order.creator,
+                order.settler,
+                order.requestedToken,
+                order.releasedToken,
+                order.requestAmount,
+                order.releaseAmount,
+                order.creationTime,
+                order.expirationTime,
+                order.randNonce
+            ))
         ));
     }
 
-    function getEthSignedMessageHash(bytes32 messageHash) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
-    }
-
-    function recoverSigner(bytes32 ethSignedMessageHash, uint8 v, bytes32 r, bytes32 s) public pure returns(address) {
-        return ecrecover(ethSignedMessageHash, v, r, s);
-    }
-
-    function verify(Order memory order) public pure returns (bool) {
-        bytes32 messageHash = getMesssageHash(order);
-        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
-        return recoverSigner(ethSignedMessageHash, order.v, order.r, order.s) == order.creator;
+    function verify(Order memory order) public view returns (bool) {
+        bytes32 messageHash = getMessageHash(order);
+        return ecrecover(messageHash, order.v, order.r, order.s) == order.creator;
     }
 
     function createTransactionID(Order memory order) public pure returns (bytes32) {

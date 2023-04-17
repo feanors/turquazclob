@@ -22,33 +22,29 @@ describe("Settler contract", function () {
     await settlerContract.deployed();
 
     const fillOrderVRS = async (order, signer) => {
-      const types = [
-        "address",
-        "address",
-        "address",
-        "address",
-        "uint256",
-        "uint256",
-        "uint256",
-        "uint256",
-        "uint256",
-      ];
-        
-      const values = [
-        order.creator,
-        order.settler,
-        order.requestedToken,
-        order.releasedToken,
-        order.requestAmount,
-        order.releaseAmount,
-        order.creationTime,
-        order.expirationTime,
-        order.randNonce
-      ];
+      const domain = {
+        name: "Turquaz",
+        version: "0.1",
+        chainId: 43114,
+        verifyingContract: settlerContract.address,
+      }
+      
+      const types = {
+          Order: [
+          { name: "creator", type: "address"},
+          { name: "settler", type: "address"},
+          { name: "requestedToken", type: "address"},
+          { name: "releasedToken", type: "address"},
+          { name: "requestAmount", type: "uint256"},
+          { name: "releaseAmount", type: "uint256"},
+          { name: "creationTime", type: "uint256"},
+          { name: "expirationTime", type: "uint256"},
+          { name: "randNonce", type: "uint256"},
+        ],
+      }
+      
+      const signature = await signer._signTypedData(domain, types, order);
 
-      const packedValues = ethers.utils.defaultAbiCoder.encode(types, values);
-      const msgHash = ethers.utils.keccak256(packedValues);
-      const signature = await signer.signMessage(ethers.utils.arrayify(msgHash))
       const {v, r, s} = ethers.utils.splitSignature(signature);
 
       order.v = v;
@@ -198,9 +194,12 @@ describe("Settler contract", function () {
     it("Should swap 1 eth to 10 fake usd correctly from two orders", async function () {
       const {ethOrderBuyer, ethOrderSeller, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
+      //console.log("v1yoyooyoyoyoyo\n\n\nyoyoyoyov1")
+
       await fillOrderVRS(ethOrderSeller, addr1)
       await fillOrderVRS(ethOrderBuyer, addr2)
     
+      //console.log("yoyooyoyoyoyo\n\n\nyoyoyoyo")
       await settlerContract.connect(owner).settle(ethOrderSeller, ethOrderBuyer);
 
       expect(await settlerContract.balanceOf(addr2.address, ethers.constants.AddressZero)).to.equal(ethers.utils.parseEther("0.99"));
