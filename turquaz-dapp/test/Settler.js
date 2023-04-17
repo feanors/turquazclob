@@ -194,12 +194,9 @@ describe("Settler contract", function () {
     it("Should swap 1 eth to 10 fake usd correctly from two orders", async function () {
       const {ethOrderBuyer, ethOrderSeller, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
-      //console.log("v1yoyooyoyoyoyo\n\n\nyoyoyoyov1")
-
       await fillOrderVRS(ethOrderSeller, addr1)
       await fillOrderVRS(ethOrderBuyer, addr2)
     
-      //console.log("yoyooyoyoyoyo\n\n\nyoyoyoyo")
       await settlerContract.connect(owner).settle(ethOrderSeller, ethOrderBuyer);
 
       expect(await settlerContract.balanceOf(addr2.address, ethers.constants.AddressZero)).to.equal(ethers.utils.parseEther("0.99"));
@@ -228,9 +225,6 @@ describe("Settler contract", function () {
 
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
-
-      console.log(order1)
-      console.log(order2)
     
       await settlerContract.connect(owner).settle(order1, order2);
 
