@@ -22,6 +22,14 @@ contract Settler {
         uint256 requestAmount;
         uint256 releaseAmount;
 
+        // purpose of slippage is both slippage and the fee the settler can extract
+        // if a settler sends two completly matching orders to the settle function
+        // the settler can take all the slippageBps to itself
+        // if a settler sends an order with slippageBps fully covered by actual slippage settler can take zero fees from that order
+        // needs iterating on the idea to achieve optimality
+        // should orders then be placed in the orderbook by price + (slippage * price) for buys and - for sells?
+        //uint256 slippageBps;
+
         uint256 creationTime;
         uint256 expirationTime;
 
@@ -142,8 +150,8 @@ contract Settler {
         require(lastAllowedSettleTime[o2.creator] <= o2.creationTime, "Order2 creator called for a force cancel");
 
         // Check fully matching settlement
-        require(o1.releaseAmount == o2.requestAmount, "Order 1 release amount does not match order2 request amount");
-        require(o1.requestAmount == o2.releaseAmount, "Order 2 release amount does not match order1 request amount");
+        require(o1.releaseAmount >= o2.requestAmount, "Order 1 release amount does not match order2 request amount");
+        require(o1.requestAmount <= o2.releaseAmount, "Order 2 release amount does not match order1 request amount");
         
         // Check balances 
         require(o1.releaseAmount <= balances[o1.creator][o1.releasedToken], "Order 1 does not have enough asset to release");
@@ -160,21 +168,31 @@ contract Settler {
         require(verify(o1), "Order 1 could not be verified");
         require(verify(o2), "Order 2 could not be verified");
 
+        uint256 o1ReleaseMidpoint = o1.releaseAmount;
+        if (o1.releaseAmount != o2.requestAmount) {
+            o1ReleaseMidpoint = (o1.releaseAmount + o2.requestAmount) / 2;
+        }
+
+        uint256 o2ReleaseMidpoint = o2.releaseAmount;
+        if (o2.releaseAmount != o1.requestAmount) {
+            o2ReleaseMidpoint = (o2.releaseAmount + o1.requestAmount) / 2;
+        }
+
 
         // Calculate fee for settler
         uint feeNumerator = 1;
         uint feeDenominator = 100;
 
-        uint256 o1Fee = (o1.releaseAmount * feeNumerator) / feeDenominator;
-        uint256 o2Fee = (o2.releaseAmount * feeNumerator) / feeDenominator;
+        uint256 o1Fee = (o1ReleaseMidpoint * feeNumerator) / feeDenominator;
+        uint256 o2Fee = (o2ReleaseMidpoint * feeNumerator) / feeDenominator;
 
         // Update balances of o1.creator
-        balances[o1.creator][o1.releasedToken] -= o1.releaseAmount;
-        balances[o1.creator][o1.requestedToken] += (o1.requestAmount - o2Fee);
+        balances[o1.creator][o1.releasedToken] -= o1ReleaseMidpoint;
+        balances[o1.creator][o1.requestedToken] += (o2ReleaseMidpoint - o2Fee);
 
         // Update balances of o2.creator
-        balances[o2.creator][o2.releasedToken] -= o2.releaseAmount;
-        balances[o2.creator][o2.requestedToken] += (o2.requestAmount - o1Fee);
+        balances[o2.creator][o2.releasedToken] -= o2ReleaseMidpoint;
+        balances[o2.creator][o2.requestedToken] += (o1ReleaseMidpoint - o1Fee);
         
 
         // Deposit fee to settler
