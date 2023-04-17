@@ -207,7 +207,7 @@ describe("Settler contract", function () {
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(10);        
     });
 
-    it("Should swap 1 fake avax to 10 fake usd correctly from two orders", async function () {
+    it("Should swap 100 fake avax to 1000 fake usd correctly from two orders", async function () {
       const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
       await fillOrderVRS(order1, addr1)
@@ -220,13 +220,41 @@ describe("Settler contract", function () {
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(990);        
     });
 
-    it("Should fail to settle due to order 1 expiration", async function () {
+    it("Should swap 100 fake avax to 1000 fake usd correctly from two orders when there is positive price difference", async function () {
       const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
+
+      order1.requestAmount = 800;
+      order2.releaseAmount = 1000;
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+
+      console.log(order1)
+      console.log(order2)
+    
+      await settlerContract.connect(owner).settle(order1, order2);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(99);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(891);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 900)
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(9)
+
+
+    });
+
+    it("Should fail to settle due to order 1 expiration", async function () {
+      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
       const date = new Date(Date.now() - (1000 * 60 * 60 * 24))
       order1.expirationTime = Math.floor(date.getTime() / 1000)
 
+      order1.requestAmount = 1000;
+      order2.releaseAmount = 1000;
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
 
