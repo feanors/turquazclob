@@ -5,7 +5,9 @@
 pragma solidity ^0.8.9;
 
 import "./interfaces/IERC20.sol";
+import "./interfaces/IERC1271.sol";
 import "hardhat/console.sol";
+
 
 
 // This is the main building block for smart contracts.
@@ -83,10 +85,6 @@ contract Settler {
 
     event Deposit(address indexed user, address indexed token, uint256 amount);
 
-    function fun(Order memory order) public {
-        console.log("hello");
-    }
-
     function deposit(address token, uint256 amount) public payable {
         require(amount > 0, "Deposit amount must be greater than 0");
 
@@ -118,42 +116,11 @@ contract Settler {
         }
     }
 
-    function getMessageHash(Order memory order) public view returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "\x19\x01",
-            DOMAIN_SEPARATOR,
-            keccak256(abi.encode(
-                ORDER_TYPEHASH,
-                order.creator,
-                order.settler,
-                order.requestedToken,
-                order.releasedToken,
-                order.requestAmount,
-                order.releaseAmount,
-                order.creationTime,
-                order.expirationTime,
-                order.randNonce
-            ))
-        ));
-    }
-
-    function verify(Order memory order) public view returns (bool) {
-        bytes32 messageHash = getMessageHash(order);
-        return ecrecover(messageHash, order.v, order.r, order.s) == order.creator;
-    }
-
-    function createTransactionID(Order memory order) public pure returns (bytes32) {
-        bytes memory signature = abi.encodePacked(order.v, order.r, order.s);
-        return keccak256(signature);
-    }
-
     event forceCanceledAll(address caller, uint256 time);
     function forceCancelAll(uint256 time) public {
         lastAllowedSettleTime[msg.sender] = time;
         emit forceCanceledAll(msg.sender, time);
     }
-
-    event DebugEvent(string message);
 
     event OrdersSettled(address indexed creator1, Order o1, address indexed creator2, Order o2);
     function settle(Order memory o1, Order memory o2) public {
@@ -232,4 +199,47 @@ contract Settler {
     function balanceOf(address account, address token) external view returns (uint256) {
         return balances[account][token];
     }
+
+    function createTransactionID(Order memory order) public pure returns (bytes32) {
+        bytes memory signature = abi.encodePacked(order.v, order.r, order.s);
+        return keccak256(signature);
+    }
+
+    function verify(Order memory order) public view returns (bool) {
+        bytes32 messageHash = getMessageHash(order);
+        address signer = ecrecover(messageHash, order.v, order.r, order.s);
+        
+        if (!isContract(order.creator)) {
+            return ecrecover(messageHash, order.v, order.r, order.s) == order.creator;
+        }
+        return IERC1271(order.creator).isValidSignature(messageHash, abi.encodePacked(order.v, order.r, order.s)) == 0x1626ba7e;
+    }
+
+    function getMessageHash(Order memory order) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(
+            "\x19\x01",
+            DOMAIN_SEPARATOR,
+            keccak256(abi.encode(
+                ORDER_TYPEHASH,
+                order.creator,
+                order.settler,
+                order.requestedToken,
+                order.releasedToken,
+                order.requestAmount,
+                order.releaseAmount,
+                order.creationTime,
+                order.expirationTime,
+                order.randNonce
+            ))
+        ));
+    }
+
+    function isContract(address addr) internal view returns (bool) {
+        uint256 size;
+        assembly { size := extcodesize(addr) }
+        return size > 0;
+    }
+
+    
+
 }
