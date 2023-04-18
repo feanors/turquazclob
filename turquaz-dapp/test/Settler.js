@@ -21,6 +21,10 @@ describe("Settler contract", function () {
     const settlerContract = await settler.deploy();
     await settlerContract.deployed();
 
+    const Signer = await ethers.getContractFactory("SignerContract");
+    const signerContract = await Signer.deploy(settlerContract.address);
+    await signerContract.deployed();
+
     const fillOrderVRS = async (order, signer) => {
       const domain = {
         name: "Turquaz",
@@ -129,8 +133,14 @@ describe("Settler contract", function () {
     // Fill addresses from owner
     await favax.transfer(addr1.address, 10000);
     await fusd.transfer(addr2.address, 10000);
+    await favax.transfer(signerContract.address, 10000);
+    await fusd.transfer(signerContract.address, 10000);
 
-    // addr1 deposits 100 fake eth
+
+    // signer contracts deposits 100 fake avax
+    await signerContract.depositToSettler(settlerContract.address, favax.address, 1000);
+
+    // addr1 deposits 1000 fake avax
     await favax.connect(addr1).approve(settlerContract.address, 1000);
     await settlerContract.connect(addr1).deposit(favax.address, 1000);
 
@@ -142,13 +152,13 @@ describe("Settler contract", function () {
     await fusd.connect(addr2).approve(settlerContract.address, 10000);
     await settlerContract.connect(addr2).deposit(fusd.address, 10000);
 
-    return { ethOrderBuyer, ethOrderSeller, settler, settlerContract, favax, fusd, owner, addr1, addr2, order1, order2, order3, order4, fillOrderVRS };
+    return { signerContract, ethOrderBuyer, ethOrderSeller, settler, settlerContract, favax, fusd, owner, addr1, addr2, order1, order2, order3, order4, fillOrderVRS };
   }
 
   describe("Util tokens deployment", function() {
     it("Should assign the total supplys of tokens to the owner", async function () {
       const { favax, fusd, owner } = await loadFixture(deployTokenFixture);
-      const transferredBefore = 10000;
+      const transferredBefore = 20000;
 
       const favaxOwnerBalance = await favax.balanceOf(owner.address);
       expect(await favax.totalSupply()).to.equal(favaxOwnerBalance.add(transferredBefore));
@@ -214,6 +224,33 @@ describe("Settler contract", function () {
 
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(99);
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(990);        
+    });
+
+    it("Should swap 100 fake avax to 1000 fake usd correctly from two orders, where one is signed by a smartcontract", async function () {
+      const {signerContract, order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      await fillOrderVRS(order2, addr2)
+      await signerContract.signOrder(fusd.address, favax.address, owner.address);
+      const contractSignedOrderRes = await signerContract.getOrder();
+      const contractSignedOrder = {
+        creator: contractSignedOrderRes.creator,
+        settler: contractSignedOrderRes.settler,
+        requestedToken: contractSignedOrderRes.requestedToken,
+        releasedToken: contractSignedOrderRes.releasedToken,
+        requestAmount: contractSignedOrderRes.requestAmount,
+        releaseAmount: contractSignedOrderRes.releaseAmount,
+        creationTime: contractSignedOrderRes.creationTime,
+        expirationTime: contractSignedOrderRes.expirationTime,
+        randNonce: contractSignedOrderRes.randNonce,
+        v: contractSignedOrderRes.v,
+        r: contractSignedOrderRes.r,
+        s: contractSignedOrderRes.s
+      }
+    
+      await settlerContract.connect(owner).settle(contractSignedOrder, order2);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(99);
+      expect(await settlerContract.balanceOf(signerContract.address, fusd.address)).to.equal(990);        
     });
 
     it("Should swap 100 fake avax to 1000 fake usd correctly from two orders when there is positive price difference", async function () {
@@ -423,7 +460,35 @@ describe("Settler contract", function () {
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
     });
 
-    it("Should fail to settle due to Order 1 could not be verified", async function () {
+    it("Should fail to settle due to Order 1 could not be verified where order 1 is contract signed", async function () {
+      const {signerContract, order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      await signerContract.signOrder(fusd.address, favax.address, owner.address);
+      const contractSignedOrderRes = await signerContract.getOrder();
+      const contractSignedOrder = {
+        creator: contractSignedOrderRes.creator,
+        settler: contractSignedOrderRes.settler,
+        requestedToken: contractSignedOrderRes.requestedToken,
+        releasedToken: contractSignedOrderRes.releasedToken,
+        requestAmount: contractSignedOrderRes.requestAmount,
+        releaseAmount: 1, // changed value compared to original residing in signerContract
+        creationTime: contractSignedOrderRes.creationTime,
+        expirationTime: contractSignedOrderRes.expirationTime,
+        randNonce: contractSignedOrderRes.randNonce,
+        v: contractSignedOrderRes.v,
+        r: contractSignedOrderRes.r,
+        s: contractSignedOrderRes.s
+      }
+      order2.requestAmount = 1; // match the release amount on the contract signed order so previous requires dont fail
+      order2.releaseAmount = 1000;
+      await fillOrderVRS(order2, addr2)
+
+      await expect(settlerContract.settle(contractSignedOrder, order2)).to.be.revertedWith("Order 1 could not be verified");
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
+      expect(await settlerContract.balanceOf(signerContract.address, fusd.address)).to.equal(0);        
+    });
+
+    it("Should fail to settle due to Order 2 could not be verified", async function () {
       const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
       order1.releaseAmount = 1;
