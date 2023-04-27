@@ -149,16 +149,16 @@ contract Settler {
         require(o1.releaseAmount <= balances[o1.creator][o1.releasedToken], "Order 1 does not have enough asset to release");
         require(o2.releaseAmount <= balances[o2.creator][o2.releasedToken], "Order 2 does not have enough asset to release");
 
-        bytes32 o1TransactionID = createTransactionID(o1);
-        bytes32 o2TransactionID = createTransactionID(o2);
+        bytes32 o1Hash = getMessageHash(o1);
+        bytes32 o2Hash = getMessageHash(o2);
 
         // check hash already settled
-        require(settledOrderHashes[o1TransactionID] == false, "Order 1 was settled before");
-        require(settledOrderHashes[o2TransactionID] == false, "Order 2 was settled before");
+        require(settledOrderHashes[o1Hash] == false, "Order 1 was settled before");
+        require(settledOrderHashes[o2Hash] == false, "Order 2 was settled before");
 
         // Verify the order of hashes (Verifier signatures are for the orders submitted and signed by the order.creator)
-        require(verify(o1), "Order 1 could not be verified");
-        require(verify(o2), "Order 2 could not be verified");
+        require(verify(o1Hash, o1), "Order 1 could not be verified");
+        require(verify(o2Hash, o2), "Order 2 could not be verified");
 
         uint256 o1ReleaseMidpoint = o1.releaseAmount;
         if (o1.releaseAmount != o2.requestAmount) {
@@ -191,8 +191,8 @@ contract Settler {
         balances[o1.settler][o1.releasedToken] += o1Fee;
         balances[o2.settler][o2.releasedToken] += o2Fee;
 
-        settledOrderHashes[o1TransactionID] = true;
-        settledOrderHashes[o2TransactionID] = true;
+        settledOrderHashes[o1Hash] = true;
+        settledOrderHashes[o2Hash] = true;
 
     }
 
@@ -205,14 +205,11 @@ contract Settler {
         return keccak256(signature);
     }
 
-    function verify(Order memory order) public view returns (bool) {
-        bytes32 messageHash = getMessageHash(order);
-        address signer = ecrecover(messageHash, order.v, order.r, order.s);
-        
+    function verify(bytes32 orderHash, Order memory order) public view returns (bool) {        
         if (!isContract(order.creator)) {
-            return ecrecover(messageHash, order.v, order.r, order.s) == order.creator;
+            return ecrecover(orderHash, order.v, order.r, order.s) == order.creator;
         }
-        return IERC1271(order.creator).isValidSignature(messageHash, abi.encodePacked(order.v, order.r, order.s)) == 0x1626ba7e;
+        return IERC1271(order.creator).isValidSignature(orderHash, abi.encodePacked(order.v, order.r, order.s)) == 0x1626ba7e;
     }
 
     function getMessageHash(Order memory order) public view returns (bytes32) {
