@@ -21,6 +21,8 @@ contract Settler {
         address creator;
         address settler;
 
+        OrderType orderType;
+
         address basePair;
 
         address requestedToken;
@@ -47,6 +49,8 @@ contract Settler {
         bytes32 s;
     }
 
+    enum OrderType{BUY, SELL}
+
     constructor() {
         DOMAIN_SEPARATOR = keccak256(abi.encode(
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -60,6 +64,7 @@ contract Settler {
             "Order(",
             "address creator,",
             "address settler,",
+            "uint8 orderType,",
             "address basePair,",
             "address requestedToken,",
             "address releasedToken,",
@@ -139,6 +144,12 @@ contract Settler {
 
         // Only the designated settler can settle
         require(o1.settler == msg.sender && o2.settler == msg.sender);
+
+        require(o1.orderType != o2.orderType, "Orders are of same type");
+        require(o1.basePair == o2.basePair, "Base pairs of orders do not match");
+        require(o1.releasedToken == o2.requestedToken && o1.requestedToken == o2.releasedToken, "Tokens traded do not match");
+        require(o1.orderType == OrderType.BUY ? o1.basePair == o1.releasedToken : o1.basePair == o1.requestedToken, "Order 1 base pair doesnt match with token address inputs");
+        require(o2.orderType == OrderType.BUY ? o2.basePair == o2.releasedToken : o2.basePair == o2.requestedToken, "Order 1 base pair doesnt match with token address inputs");
 
         // check expiry
         require(o1.expirationTime >= block.timestamp, "Order 1 expired");
@@ -226,6 +237,7 @@ contract Settler {
                 ORDER_TYPEHASH,
                 order.creator,
                 order.settler,
+                order.orderType,
                 order.basePair,
                 order.requestedToken,
                 order.releasedToken,
