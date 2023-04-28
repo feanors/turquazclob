@@ -21,6 +21,8 @@ contract Settler {
         address creator;
         address settler;
 
+        address basePair;
+
         address requestedToken;
         address releasedToken;
 
@@ -58,6 +60,7 @@ contract Settler {
             "Order(",
             "address creator,",
             "address settler,",
+            "address basePair,",
             "address requestedToken,",
             "address releasedToken,",
             "uint256 requestAmount,",
@@ -208,7 +211,7 @@ contract Settler {
         return keccak256(signature);
     }
 
-    function verify(bytes32 orderHash, Order memory order) public view returns (bool) {        
+    function verify(bytes32 orderHash, Order memory order) public view returns (bool) {
         if (!isContract(order.creator)) {
             return ecrecover(orderHash, order.v, order.r, order.s) == order.creator;
         }
@@ -223,6 +226,7 @@ contract Settler {
                 ORDER_TYPEHASH,
                 order.creator,
                 order.settler,
+                order.basePair,
                 order.requestedToken,
                 order.releasedToken,
                 order.requestAmount,
