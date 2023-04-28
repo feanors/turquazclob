@@ -123,7 +123,11 @@ contract Settler {
     }
 
     event OrdersSettled(address indexed creator1, Order o1, address indexed creator2, Order o2);
+
+    // settle assumes o1 is the maker and o2 is the taker while calculating best price for order
+    // since current design is taker gets the best price, positive price difference on order is fully favored to taker
     function settle(Order memory o1, Order memory o2) public {
+
         // Sanity check
         require(o1.releaseAmount > 0, "Order1 release amount is not larger than 0");
         require(o1.requestAmount > 0, "Order1 request amount is not larger than 0");
@@ -160,31 +164,30 @@ contract Settler {
         require(verify(o1Hash, o1), "Order 1 could not be verified");
         require(verify(o2Hash, o2), "Order 2 could not be verified");
 
-        uint256 o1ReleaseMidpoint = o1.releaseAmount;
-        if (o1.releaseAmount != o2.requestAmount) {
-            o1ReleaseMidpoint = (o1.releaseAmount + o2.requestAmount) / 2;
-        }
+        // Calculates on o1 < o2
+        uint256 o1EffectiveRequestAmount = o1.requestAmount;
+        uint256 o2EffectiveRequestAmount = o1.releaseAmount;
 
-        uint256 o2ReleaseMidpoint = o2.releaseAmount;
-        if (o2.releaseAmount != o1.requestAmount) {
-            o2ReleaseMidpoint = (o2.releaseAmount + o1.requestAmount) / 2;
+        // Calculates to o1 > o2
+        if (o1.releaseAmount > o2.requestAmount) {
+            o1EffectiveRequestAmount = o2.releaseAmount;
+            o2EffectiveRequestAmount = o2.requestAmount;
         }
-
 
         // Calculate fee for settler
         uint feeNumerator = 1;
         uint feeDenominator = 100;
 
-        uint256 o1Fee = (o1ReleaseMidpoint * feeNumerator) / feeDenominator;
-        uint256 o2Fee = (o2ReleaseMidpoint * feeNumerator) / feeDenominator;
+        uint256 o1Fee = (o2EffectiveRequestAmount * feeNumerator) / feeDenominator;
+        uint256 o2Fee = (o1EffectiveRequestAmount * feeNumerator) / feeDenominator;
 
         // Update balances of o1.creator
-        balances[o1.creator][o1.releasedToken] -= o1ReleaseMidpoint;
-        balances[o1.creator][o1.requestedToken] += (o2ReleaseMidpoint - o2Fee);
+        balances[o1.creator][o1.releasedToken] -= o2EffectiveRequestAmount;
+        balances[o1.creator][o1.requestedToken] += (o1EffectiveRequestAmount - o2Fee);
 
         // Update balances of o2.creator
-        balances[o2.creator][o2.releasedToken] -= o2ReleaseMidpoint;
-        balances[o2.creator][o2.requestedToken] += (o1ReleaseMidpoint - o1Fee);
+        balances[o2.creator][o2.releasedToken] -= o1EffectiveRequestAmount;
+        balances[o2.creator][o2.requestedToken] += (o2EffectiveRequestAmount - o1Fee);
         
 
         // Deposit fee to settler
