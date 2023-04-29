@@ -78,9 +78,11 @@ contract Settler {
     }
 
     
+    
 
-
-    mapping(bytes32 => bool) public settledOrderHashes;
+    // orderHashFill represents the amount filled, for sellers this amount would be the amount of token x sold
+    // and for buyers it is the amount bought
+    mapping(bytes32 => uint256) public orderHashFill;
 
     // Maps user to their last allowed settle time
     // Users calls the forceCancelAll function to set their time to current time
@@ -158,10 +160,6 @@ contract Settler {
         // compare to user force cancels
         require(lastAllowedSettleTime[o1.creator] <= o1.creationTime, "Order1 creator called for a force cancel");
         require(lastAllowedSettleTime[o2.creator] <= o2.creationTime, "Order2 creator called for a force cancel");
-
-        // Check fully matching settlement
-        require(o1.releaseAmount >= o2.requestAmount, "Order 1 release amount does not match order2 request amount");
-        require(o1.requestAmount <= o2.releaseAmount, "Order 2 release amount does not match order1 request amount");
         
         // Check balances 
         require(o1.releaseAmount <= balances[o1.creator][o1.releasedToken], "Order 1 does not have enough asset to release");
@@ -170,24 +168,29 @@ contract Settler {
         bytes32 o1Hash = getMessageHash(o1);
         bytes32 o2Hash = getMessageHash(o2);
 
-        // check hash already settled
-        require(settledOrderHashes[o1Hash] == false, "Order 1 was settled before");
-        require(settledOrderHashes[o2Hash] == false, "Order 2 was settled before");
-
         // Verify the order of hashes (Verifier signatures are for the orders submitted and signed by the order.creator)
         require(verify(o1Hash, o1), "Order 1 could not be verified");
         require(verify(o2Hash, o2), "Order 2 could not be verified");
+
+        uint256 o1Price = o1.orderType == OrderType.BUY ? (o1.releaseAmount * 10**5)/o1.requestAmount : (o1.requestAmount * 10**5)/o1.releaseAmount;
+        uint256 o2Price = o2.orderType == OrderType.BUY ? (o2.releaseAmount * 10**5)/o2.requestAmount : (o2.requestAmount * 10**5)/o2.releaseAmount;
+        require(o1.orderType == OrderType.BUY ? o1Price >= o2Price : o1Price <= o2Price, "Maker price is worse than taker price");
+
 
         // Calculates on o1 < o2
         uint256 o1EffectiveRequestAmount = o1.requestAmount;
         uint256 o2EffectiveRequestAmount = o1.releaseAmount;
 
         // Calculates to o1 > o2
-        if (o1.releaseAmount > o2.requestAmount) {
-            o1EffectiveRequestAmount = o2.releaseAmount;
-            o2EffectiveRequestAmount = o2.requestAmount;
+        if (o1.orderType == OrderType.BUY ? o1.requestAmount > o2.releaseAmount : o1.releaseAmount > o2.requestAmount) {
+            o1EffectiveRequestAmount = o1.orderType == OrderType.BUY ? o2.releaseAmount : o2.releaseAmount * o1Price / o2Price;
+            o2EffectiveRequestAmount = o1.orderType == OrderType.BUY ? o2.requestAmount * o1Price / o2Price : o2.requestAmount;
         }
 
+        // check hash already settled
+        require(o1.orderType == OrderType.BUY ? orderHashFill[o1Hash] + o1EffectiveRequestAmount <= o1.requestAmount : orderHashFill[o1Hash] + o2EffectiveRequestAmount <= o1.releaseAmount, "Order 1 was settled before");
+        require(o2.orderType == OrderType.BUY ? orderHashFill[o2Hash] + o2EffectiveRequestAmount <= o2.requestAmount : orderHashFill[o2Hash] + o1EffectiveRequestAmount <= o2.releaseAmount, "Order 2 was settled before");
+        
         // Calculate fee for settler
         uint feeNumerator = 1;
         uint feeDenominator = 100;
@@ -208,8 +211,8 @@ contract Settler {
         balances[o1.settler][o1.releasedToken] += o1Fee;
         balances[o2.settler][o2.releasedToken] += o2Fee;
 
-        settledOrderHashes[o1Hash] = true;
-        settledOrderHashes[o2Hash] = true;
+        orderHashFill[o1Hash] += o1.orderType == OrderType.BUY ? o1EffectiveRequestAmount : o2EffectiveRequestAmount;
+        orderHashFill[o2Hash] += o2.orderType == OrderType.BUY ? o2EffectiveRequestAmount : o1EffectiveRequestAmount;
 
     }
 
