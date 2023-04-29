@@ -14,14 +14,27 @@ contract SignerContract is IERC1271 {
     address settlerContractAddress;
 
     struct Order {
+        //version?? or version in future versions ?
         address creator;
         address settler;
+
+        OrderType orderType;
+
+        address basePair;
 
         address requestedToken;
         address releasedToken;
 
         uint256 requestAmount;
         uint256 releaseAmount;
+
+        // purpose of slippage is both slippage and the fee the settler can extract
+        // if a settler sends two completly matching orders to the settle function
+        // the settler can take all the slippageBps to itself
+        // if a settler sends an order with slippageBps fully covered by actual slippage settler can take zero fees from that order
+        // needs iterating on the idea to achieve optimality
+        // should orders then be placed in the orderbook by price + (slippage * price) for buys and - for sells?
+        //uint256 slippageBps;
 
         uint256 creationTime;
         uint256 expirationTime;
@@ -32,6 +45,8 @@ contract SignerContract is IERC1271 {
         bytes32 r;
         bytes32 s;
     }
+
+    enum OrderType{BUY, SELL}
 
     constructor(address _settlerContractAddress) {
         owner = msg.sender;
@@ -58,11 +73,14 @@ contract SignerContract is IERC1271 {
         }
     }
 
+    // This is a sell order
     function signOrder(address requestedToken, address releasedToken, address settler) public {
 
         orderr = Order ({
             creator: address(this),
             settler: settler,
+            orderType: OrderType.SELL,
+            basePair: requestedToken,
             requestedToken: requestedToken,
             releasedToken: releasedToken,
             requestAmount: 1000,
@@ -94,6 +112,8 @@ contract SignerContract is IERC1271 {
             "Order(",
             "address creator,",
             "address settler,",
+            "uint8 orderType,",
+            "address basePair,",
             "address requestedToken,",
             "address releasedToken,",
             "uint256 requestAmount,",
@@ -111,6 +131,8 @@ contract SignerContract is IERC1271 {
                 ORDER_TYPEHASH,
                 order.creator,
                 order.settler,
+                order.orderType,
+                order.basePair,
                 order.requestedToken,
                 order.releasedToken,
                 order.requestAmount,

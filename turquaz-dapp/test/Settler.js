@@ -25,6 +25,23 @@ describe("Settler contract", function () {
     const signerContract = await Signer.deploy(settlerContract.address);
     await signerContract.deployed();
 
+    const createOrder = (creator, settler, orderType, basePair, requestedToken, releasedToken, requestAmount, releaseAmount) => {
+      const date = new Date(Date.now() + (1000 * 60 * 60 * 24))
+      return {
+        creator: creator,
+        settler: settler,
+        orderType: orderType,
+        basePair: basePair,
+        requestedToken: requestedToken,
+        releasedToken: releasedToken,
+        requestAmount: requestAmount,
+        releaseAmount: releaseAmount,
+        creationTime: Date.now(),
+        expirationTime: Math.floor(date.getTime() / 1000),
+        randNonce: Math.floor(Math.random() * 100000),
+      }
+    }
+
     const fillOrderVRS = async (order, signer) => {
       const domain = {
         name: "Turquaz",
@@ -37,6 +54,8 @@ describe("Settler contract", function () {
           Order: [
           { name: "creator", type: "address"},
           { name: "settler", type: "address"},
+          { name: "orderType", type: "uint8"},
+          { name: "basePair", type: "address"},
           { name: "requestedToken", type: "address"},
           { name: "releasedToken", type: "address"},
           { name: "requestAmount", type: "uint256"},
@@ -46,7 +65,6 @@ describe("Settler contract", function () {
           { name: "randNonce", type: "uint256"},
         ],
       }
-      
       const signature = await signer._signTypedData(domain, types, order);
 
       const {v, r, s} = ethers.utils.splitSignature(signature);
@@ -61,6 +79,8 @@ describe("Settler contract", function () {
     const order1 = {
         creator: addr1.address,
         settler: owner.address,
+        orderType: 1,
+        basePair: fusd.address,
         requestedToken: fusd.address,
         releasedToken: favax.address,
         requestAmount: 1000,
@@ -73,6 +93,8 @@ describe("Settler contract", function () {
     const ethOrderSeller = {
       creator: addr1.address,
         settler: owner.address,
+        orderType: 1,
+        basePair: fusd.address,
         requestedToken: fusd.address,
         releasedToken: ethers.constants.AddressZero,
         requestAmount: 10,
@@ -85,6 +107,8 @@ describe("Settler contract", function () {
     const ethOrderBuyer = {
       creator: addr2.address,
         settler: owner.address,
+        orderType: 0,
+        basePair: fusd.address,
         requestedToken: ethers.constants.AddressZero,
         releasedToken: fusd.address,
         requestAmount: ethers.utils.parseEther("1"),
@@ -97,6 +121,8 @@ describe("Settler contract", function () {
     const order2 = {
         creator: addr2.address,
         settler: owner.address,
+        orderType: 0,
+        basePair: fusd.address,
         requestedToken: favax.address,
         releasedToken: fusd.address,
         requestAmount: 100,
@@ -109,6 +135,8 @@ describe("Settler contract", function () {
     const order3 = {
       creator: addr1.address,
       settler: owner.address,
+      orderType: 1,
+      basePair: fusd.address,
       requestedToken: fusd.address,
       releasedToken: favax.address,
       requestAmount: 1000,
@@ -121,6 +149,8 @@ describe("Settler contract", function () {
   const order4 = {
       creator: addr2.address,
       settler: owner.address,
+      orderType: 0,
+      basePair: fusd.address,
       requestedToken: favax.address,
       releasedToken: fusd.address,
       requestAmount: 100,
@@ -152,7 +182,7 @@ describe("Settler contract", function () {
     await fusd.connect(addr2).approve(settlerContract.address, 10000);
     await settlerContract.connect(addr2).deposit(fusd.address, 10000);
 
-    return { signerContract, ethOrderBuyer, ethOrderSeller, settler, settlerContract, favax, fusd, owner, addr1, addr2, order1, order2, order3, order4, fillOrderVRS };
+    return { createOrder, signerContract, settler, settlerContract, favax, fusd, owner, addr1, addr2, fillOrderVRS };
   }
 
   describe("Util tokens deployment", function() {
@@ -202,39 +232,250 @@ describe("Settler contract", function () {
   describe("Settle exchange of two orders", function () {
 
     it("Should swap 1 eth to 10 fake usd correctly from two orders", async function () {
-      const {ethOrderBuyer, ethOrderSeller, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, fusd } = await loadFixture(deployTokenFixture);
 
-      await fillOrderVRS(ethOrderSeller, addr1)
-      await fillOrderVRS(ethOrderBuyer, addr2)
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, ethers.constants.AddressZero, 10, ethers.utils.parseEther("1"));
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, ethers.constants.AddressZero, fusd.address, ethers.utils.parseEther("1"), 10);
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
     
-      await settlerContract.connect(owner).settle(ethOrderSeller, ethOrderBuyer);
+      await settlerContract.connect(owner).settle(order1, order2);
 
       expect(await settlerContract.balanceOf(addr2.address, ethers.constants.AddressZero)).to.equal(ethers.utils.parseEther("0.99"));
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(10);        
     });
 
     it("Should swap 100 fake avax to 1000 fake usd correctly from two orders", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
 
-    
       await settlerContract.connect(owner).settle(order1, order2);
 
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(99);
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(990);        
     });
 
+    it("Should partially settle an order to sell 200 fake avax to 2000 fake usd correctly against an order to buy 100 fake avax for 1000 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 2000, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order1, order2);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should partially settle an order to sell 200 fake avax to 2000 fake usd correctly against an order to buy 100 fake avax for 1200 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 2000, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1200)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order1, order2);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should partially settle an order to sell 100 fake avax to 1000 fake usd correctly against an order to buy 200 fake avax for 2000 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 200, 2000)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order1, order2);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should partially settle an order to sell 100 fake avax to 1000 fake usd correctly against an order to buy 200 fake avax for 2400 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 200, 2400)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order1, order2);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+
+    it("Should partially settle an order to buy 200 fake avax to 2000 fake usd correctly against an order to sell 100 fake avax for 1000 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 200, 2000)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order2, order1);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should partially settle an order to buy 200 fake avax to 2000 fake usd correctly against an order to sell 100 fake avax for 800 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 800, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 200, 2000)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order2, order1);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should partially settle an order to buy 100 fake avax to 1000 fake usd correctly against an order to sell 200 fake avax for 1600 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1600, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order2, order1);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should partially settle an order to buy 100 fake avax to 1000 fake usd correctly against an order to sell 200 fake avax for 2000 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 2000, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order2, order1);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
+
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);        
+    });
+
+    it("Should sell 200 fake avax to 2000 fake usd correctly from two buy orders of 100 fake avax for 1000 fake usd orders", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 2000, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      const order3 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+      await fillOrderVRS(order3, addr2)
+
+
+      await settlerContract.connect(owner).settle(order1, order2);
+      await settlerContract.connect(owner).settle(order1, order3);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(198);
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1980);        
+    });
+
+    it("Should sell 200 fake avax to 2000 fake usd correctly from two buy orders of 100 fake avax for 1200 fake usd orders", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 2000, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1200)
+      const order3 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1200)
+
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+      await fillOrderVRS(order3, addr2)
+
+
+      await settlerContract.connect(owner).settle(order2, order1);
+      await settlerContract.connect(owner).settle(order3, order1);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(198);
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(2376);        
+    });
+
     it("Should swap 100 fake avax to 1000 fake usd correctly from two orders, where one is signed by a smartcontract", async function () {
-      const {signerContract, order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {signerContract, createOrder, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
       await fillOrderVRS(order2, addr2)
       await signerContract.signOrder(fusd.address, favax.address, owner.address);
       const contractSignedOrderRes = await signerContract.getOrder();
+      
       const contractSignedOrder = {
         creator: contractSignedOrderRes.creator,
         settler: contractSignedOrderRes.settler,
+        orderType: contractSignedOrderRes.orderType,
+        basePair: contractSignedOrderRes.basePair,
         requestedToken: contractSignedOrderRes.requestedToken,
         releasedToken: contractSignedOrderRes.releasedToken,
         requestAmount: contractSignedOrderRes.requestAmount,
@@ -246,45 +487,112 @@ describe("Settler contract", function () {
         r: contractSignedOrderRes.r,
         s: contractSignedOrderRes.s
       }
-    
+      
       await settlerContract.connect(owner).settle(contractSignedOrder, order2);
 
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(99);
       expect(await settlerContract.balanceOf(signerContract.address, fusd.address)).to.equal(990);        
     });
 
-    it("Should swap 100 fake avax to 1000 fake usd correctly from two orders when there is positive price difference", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+    it("Should swap 100 fake avax to 1000 fake usd correctly from two orders when there is positive price difference, taker is the buyer", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
-
-      order1.requestAmount = 800;
-      order2.releaseAmount = 1000;
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 800, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
     
       await settlerContract.connect(owner).settle(order1, order2);
 
-      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(99);
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
       expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
       expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
 
 
-      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(891);
-      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 900)
-      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(9)
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(800-8);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 800);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(8);
+    });
+
+    it("Should swap 100 fake avax to 1000 fake usd correctly from two orders when there is positive price difference, taker is the seller", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 800, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+    
+      await settlerContract.connect(owner).settle(order2, order1);
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(100-1);
+      expect(await settlerContract.balanceOf(owner.address, favax.address)).to.equal(1);
+      expect(await settlerContract.balanceOf(addr1.address, favax.address)).to.equal(1000 - 100);
 
 
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(1000-10);
+      expect(await settlerContract.balanceOf(addr2.address, fusd.address)).to.equal(10000 - 1000);
+      expect(await settlerContract.balanceOf(owner.address, fusd.address)).to.equal(10);
+    });
+
+    it("Should fail to settle a buy order of 10 fake avax for 20 fake usd agains a sell order of 9 fake avax for 21 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 21, 9)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 10, 20)
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+
+      await expect(settlerContract.settle(order2,order1)).to.be.revertedWith("Maker price is worse than taker price");
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);         
+    });
+
+    it("Should fail to settle a sell order of 10 fake avax for 20 fake usd agains a buy order of 11 fake avax for 17 fake usd", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 20, 10)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 11, 17)
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+
+      await expect(settlerContract.settle(order2,order1)).to.be.revertedWith("Maker price is worse than taker price");
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);         
+    });
+
+    it("Should fail sell 200 fake avax to 2000 fake usd correctly from three buy orders of 100 fake avax for 1200 fake usd orders for the third try", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 2000, 200)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1200)
+      const order3 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1200)
+      const order4 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1200)
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+      await fillOrderVRS(order3, addr2)
+      await fillOrderVRS(order4, addr2)
+
+      await settlerContract.connect(owner).settle(order2, order1);
+      await settlerContract.connect(owner).settle(order3, order1);
+      await expect(settlerContract.settle(order4,order1)).to.be.revertedWith("Order 2 was settled before");
+
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(198);
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(2376);        
     });
 
     it("Should fail to settle due to order 1 expiration", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
-      const date = new Date(Date.now() - (1000 * 60 * 60 * 24))
-      order1.expirationTime = Math.floor(date.getTime() / 1000)
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
-      order1.requestAmount = 1000;
-      order2.releaseAmount = 1000;
+      order1.expirationTime = Math.floor(new Date(Date.now() - (1000 * 60 * 60 * 24)).getTime() / 1000)
+
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
 
@@ -294,31 +602,26 @@ describe("Settler contract", function () {
     });
 
     it("Should fail to settle due to order 2 expiration", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
-      // weird behaviour where if only order2's expiration date is set to an old date
-      // order1's also get set somehow?? im assuming this to be a js thing?
-      const date1 = new Date(Date.now() + (1000 * 60 * 60 * 24));
-      const date2 = new Date(Date.now() - (1000 * 60 * 60 * 24));
+      order2.expirationTime = Math.floor(new Date(Date.now() - (1000 * 60 * 60 * 24)).getTime() / 1000)
 
-      order1.expirationTime = Math.floor(date1.getTime() / 1000);
-      order2.expirationTime = Math.floor(date2.getTime() / 1000);
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
 
-      await fillOrderVRS(order1, addr1);
-      await fillOrderVRS(order2, addr2);
-      
       await expect(settlerContract.settle(order1,order2)).to.be.revertedWith("Order 2 expired");
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
     });
 
     it("Should fail to settle due to order 1 force cancellation", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
-      const date = new Date(Date.now() + (1000 * 60 * 60 * 24))
-      order1.expirationTime = Math.floor(date.getTime() / 1000)
-      order2.expirationTime = Math.floor(date.getTime() / 1000)
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
@@ -331,12 +634,11 @@ describe("Settler contract", function () {
     });
 
     it("Should fail to settle due to order 2 force cancellation", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
-      const date = new Date(Date.now() + (1000 * 60 * 60 * 24))
-      order1.expirationTime = Math.floor(date.getTime() / 1000)
-      order2.expirationTime = Math.floor(date.getTime() / 1000)
-      
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
 
@@ -344,12 +646,16 @@ describe("Settler contract", function () {
 
       await expect(settlerContract.settle(order1,order2)).to.be.revertedWith("Order2 creator called for a force cancel");
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
-      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);           
     });
 
 
     it("Should fail to settle due to order 1 already settled", async function () {
-      const {order1, order2, order4, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      const order4 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
       
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
@@ -363,11 +669,14 @@ describe("Settler contract", function () {
     });
 
     it("Should fail to settle due to order 2 already settled", async function () {
-      const {order1, order2, order3, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      const order3 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
       
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
-      order3.randNonce = Math.floor(Math.random()* 1000)
       await fillOrderVRS(order3, addr1)
 
       await settlerContract.settle(order1, order2); 
@@ -377,47 +686,12 @@ describe("Settler contract", function () {
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(990);        
     });
 
-    it("Should fail to settle due to Order 1 release amount does not match order2 request amount", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
-      
-      order1.releaseAmount = 1
-      await fillOrderVRS(order1, addr1)
-      await fillOrderVRS(order2, addr2)
-
-      
-      await expect(settlerContract.settle(order1, order2)).to.be.revertedWith("Order 1 release amount does not match order2 request amount");
-      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
-      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
-    });
-
-    it("Should fail to settle due to Order 2 release amount does not match order1 request amount", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
-
-      // same bug with the time example
-      // both orders get adjusted for some reason
-      // 100 below is the default value
-      
-      order1.releaseAmount = 100;
-
-      const nonMatchingReleaseAmount = 1;
-      order2.releaseAmount = nonMatchingReleaseAmount;
-      await fillOrderVRS(order1, addr1)
-      await fillOrderVRS(order2, addr2)
-      
-      await expect(settlerContract.settle(order1, order2)).to.be.revertedWith("Order 2 release amount does not match order1 request amount");
-      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
-      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
-    });
-
     it("Should fail to settle due to Order 1 does not have enough asset to release", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 9999)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
 
-      // js why u do this :(
-      order1.releaseAmount = 1001;
-      order1.requestAmount = 1;
-      order2.requestAmount = 1001;
-      order2.releaseAmount = 1;
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
       
@@ -427,83 +701,80 @@ describe("Settler contract", function () {
     });
 
     it("Should fail to settle due to Order 2 does not have enough asset to release", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 10001)
 
-      // js why u do this :(
-      order1.releaseAmount = 1;
-      order1.requestAmount = 10001;
-      order2.requestAmount = 1;
-      order2.releaseAmount = 10001;
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
       
       await expect(settlerContract.settle(order1, order2)).to.be.revertedWith("Order 2 does not have enough asset to release");
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
-      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);         
     });
 
     it("Should fail to settle due to Order 1 could not be verified", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
 
-      // ahh i think previous calls are affecting this
-      // maybe i misunderstood how loadfixture works?? will check later, but for balances it looked fine?
-      order1.releaseAmount = 1;
-      order1.requestAmount = 1;
-      order2.requestAmount = 1;
-      order2.releaseAmount = 1;
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+
       await fillOrderVRS(order1, addr1)
       await fillOrderVRS(order2, addr2)
+
       order1.v = 4;
+      
       await expect(settlerContract.settle(order1, order2)).to.be.revertedWith("Order 1 could not be verified");
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
       expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
     });
 
+    it("Should fail to settle due to Order 2 could not be verified", async function () {
+      const {createOrder, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order1 = createOrder(addr1.address, owner.address, 1, fusd.address, fusd.address, favax.address, 1000, 100)
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+
+      await fillOrderVRS(order1, addr1)
+      await fillOrderVRS(order2, addr2)
+
+      order2.v = 4;
+      
+      await expect(settlerContract.settle(order1, order2)).to.be.revertedWith("Order 2 could not be verified");
+      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
+      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
+    });
+
     it("Should fail to settle due to Order 1 could not be verified where order 1 is contract signed", async function () {
-      const {signerContract, order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+      const {createOrder, signerContract, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
+
+      const order2 = createOrder(addr2.address, owner.address, 0, fusd.address, favax.address, fusd.address, 100, 1000)
+      await fillOrderVRS(order2, addr2)
 
       await signerContract.signOrder(fusd.address, favax.address, owner.address);
       const contractSignedOrderRes = await signerContract.getOrder();
       const contractSignedOrder = {
         creator: contractSignedOrderRes.creator,
         settler: contractSignedOrderRes.settler,
+        orderType: contractSignedOrderRes.orderType,
+        basePair: contractSignedOrderRes.basePair,
         requestedToken: contractSignedOrderRes.requestedToken,
         releasedToken: contractSignedOrderRes.releasedToken,
         requestAmount: contractSignedOrderRes.requestAmount,
-        releaseAmount: 1, // changed value compared to original residing in signerContract
+        releaseAmount: contractSignedOrderRes.releaseAmount,
         creationTime: contractSignedOrderRes.creationTime,
         expirationTime: contractSignedOrderRes.expirationTime,
-        randNonce: contractSignedOrderRes.randNonce,
+        randNonce: 1,
         v: contractSignedOrderRes.v,
         r: contractSignedOrderRes.r,
         s: contractSignedOrderRes.s
       }
-      order2.requestAmount = 1; // match the release amount on the contract signed order so previous requires dont fail
-      order2.releaseAmount = 1000;
-      await fillOrderVRS(order2, addr2)
 
       await expect(settlerContract.settle(contractSignedOrder, order2)).to.be.revertedWith("Order 1 could not be verified");
       expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
       expect(await settlerContract.balanceOf(signerContract.address, fusd.address)).to.equal(0);        
     });
-
-    it("Should fail to settle due to Order 2 could not be verified", async function () {
-      const {order1, order2, addr1, addr2, fillOrderVRS, owner, settlerContract, favax, fusd } = await loadFixture(deployTokenFixture);
-
-      order1.releaseAmount = 1;
-      order1.requestAmount = 1;
-      order2.requestAmount = 1;
-      order2.releaseAmount = 1;
-      await fillOrderVRS(order2, addr2)
-      await fillOrderVRS(order1, addr1)
-      order2.v = 4;
-
-      await expect(settlerContract.settle(order1, order2)).to.be.revertedWith("Order 2 could not be verified");
-      expect(await settlerContract.balanceOf(addr2.address, favax.address)).to.equal(0);
-      expect(await settlerContract.balanceOf(addr1.address, fusd.address)).to.equal(0);        
-    });
-
   });
 
   
