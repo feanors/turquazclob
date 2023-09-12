@@ -203,7 +203,6 @@ contract Settler {
 
         require(totalPrice <= balances[buyer.creator][buyer.basePair] * precision, "Buyer does not have enough assets to buy");
         require(totalAmount <= balances[seller.creator][seller.tradedPair], "Seller does not have enough assets to sell");
-        console.log(balances[buyer.creator][buyer.basePair] * precision);
 
         uint feeNumerator = 1;
         uint feeDenominator = 100;
