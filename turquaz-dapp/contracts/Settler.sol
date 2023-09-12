@@ -6,13 +6,23 @@ pragma solidity ^0.8.9;
 
 import "./interfaces/IERC20.sol";
 import "./interfaces/IERC1271.sol";
-import "hardhat/console.sol";
+import "./hardhat/console.sol";
+
 
 
 
 // This is the main building block for smart contracts.
 contract Settler {
 
+    bool internal locked = false;
+    modifier noReentrancy() {
+        require(!locked, "Reentrant call detected");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    uint256 precision = 10 ** 8;
     bytes32 public immutable DOMAIN_SEPARATOR;
     bytes32 public immutable ORDER_TYPEHASH;
 
@@ -24,12 +34,16 @@ contract Settler {
         OrderType orderType;
 
         address basePair;
+        address tradedPair;
 
-        address requestedToken;
-        address releasedToken;
-
-        uint256 requestAmount;
-        uint256 releaseAmount;
+        // minSettleAmount represents the minimum settlement amount. for example,
+        // a buyer creates a buy order for 100btc and a seller creates a sell order for 10btc,
+        // if the buyer's minSettleAmount is larget than 10btc, that trade wont settle, however,
+        // this will most likely be handler offchain.
+        // same situation again applies for partially filled orders and their settlements
+        uint256 minSettleAmount;
+        uint256 amount;
+        uint256 price;
 
         // purpose of slippage is both slippage and the fee the settler can extract
         // if a settler sends two completly matching orders to the settle function
@@ -66,10 +80,10 @@ contract Settler {
             "address settler,",
             "uint8 orderType,",
             "address basePair,",
-            "address requestedToken,",
-            "address releasedToken,",
-            "uint256 requestAmount,",
-            "uint256 releaseAmount,",
+            "address tradedPair,",
+            "uint256 minSettleAmount,"
+            "uint256 amount,",
+            "uint256 price,",
             "uint256 creationTime,",
             "uint256 expirationTime,",
             "uint256 randNonce",
@@ -95,7 +109,7 @@ contract Settler {
 
     event Deposit(address indexed user, address indexed token, uint256 amount);
 
-    function deposit(address token, uint256 amount) public payable {
+    function deposit(address token, uint256 amount) public payable noReentrancy {
         require(amount > 0, "Deposit amount must be greater than 0");
 
         if (token == address(0)) {
@@ -112,7 +126,7 @@ contract Settler {
     }
     
 
-    function withdraw(address token, uint256 amount) public {
+    function withdraw(address token, uint256 amount) public noReentrancy {
         require(amount > 0, "Amount must be greater than zero");
         require(amount <= balances[msg.sender][token], "Insufficient balance");
         if (token == address(0)) {
@@ -132,88 +146,82 @@ contract Settler {
         emit forceCanceledAll(msg.sender, time);
     }
 
-    event OrdersSettled(address indexed creator1, Order o1, address indexed creator2, Order o2);
+    event OrdersSettled(address indexed creator1, Order maker, address indexed creator2, Order taker);
 
-    // settle assumes o1 is the maker and o2 is the taker while calculating best price for order
+    function calculateRemainingSettleAmount(Order memory order, bytes32 orderHash) private view returns (uint256) {
+        return order.amount - orderHashFill[orderHash];
+    }
+
     // since current design is taker gets the best price, positive price difference on order is fully favored to taker
-    function settle(Order memory o1, Order memory o2) public {
-
+    function settle(Order memory buyer, Order memory seller, bool isBuyerMaker) public noReentrancy {
+    
         // Sanity check
-        require(o1.releaseAmount > 0, "Order1 release amount is not larger than 0");
-        require(o1.requestAmount > 0, "Order1 request amount is not larger than 0");
-        require(o2.releaseAmount > 0, "Order2 release amount is not larger than 0");
-        require(o2.requestAmount > 0, "Order2 request amount is not larger than 0");
+        require(buyer.amount > 0, "Buy order amount is lte to 0");
+        require(buyer.price > 0, "Buy order price is lte to 0");
+        require(seller.amount > 0, "Sell order amount is lte to 0");
+        require(seller.price > 0, "Sell order price is lte to 0");
 
         // Only the designated settler can settle
-        require(o1.settler == msg.sender && o2.settler == msg.sender);
+        require(buyer.settler == msg.sender && seller.settler == msg.sender);
 
-        require(o1.orderType != o2.orderType, "Orders are of same type");
-        require(o1.basePair == o2.basePair, "Base pairs of orders do not match");
-        require(o1.releasedToken == o2.requestedToken && o1.requestedToken == o2.releasedToken, "Tokens traded do not match");
-        require(o1.orderType == OrderType.BUY ? o1.basePair == o1.releasedToken : o1.basePair == o1.requestedToken, "Order 1 base pair doesnt match with token address inputs");
-        require(o2.orderType == OrderType.BUY ? o2.basePair == o2.releasedToken : o2.basePair == o2.requestedToken, "Order 1 base pair doesnt match with token address inputs");
+        require(buyer.orderType == OrderType.BUY, "First parameter should be of type OrderType.Buy");
+        require(seller.orderType == OrderType.SELL, "Second parameter should be of type OrderType.Sell");
+
+        require(buyer.basePair == seller.basePair, "Base pairs of orders do not match");
+        require(buyer.tradedPair == seller.tradedPair, "Traded pairs of orders do not match");
 
         // check expiry
-        require(o1.expirationTime >= block.timestamp, "Order 1 expired");
-        require(o2.expirationTime >= block.timestamp, "Order 2 expired");
+        require(buyer.expirationTime >= block.timestamp, "Buy order expired");
+        require(seller.expirationTime >= block.timestamp, "Sell order expired");
 
         // compare to user force cancels
-        require(lastAllowedSettleTime[o1.creator] <= o1.creationTime, "Order1 creator called for a force cancel");
-        require(lastAllowedSettleTime[o2.creator] <= o2.creationTime, "Order2 creator called for a force cancel");
+        require(lastAllowedSettleTime[buyer.creator] <= buyer.creationTime, "Buyer called for a force cancel");
+        require(lastAllowedSettleTime[seller.creator] <= seller.creationTime, "Seller called for a force cancel");
         
-        // Check balances 
-        require(o1.releaseAmount <= balances[o1.creator][o1.releasedToken], "Order 1 does not have enough asset to release");
-        require(o2.releaseAmount <= balances[o2.creator][o2.releasedToken], "Order 2 does not have enough asset to release");
-
-        bytes32 o1Hash = getMessageHash(o1);
-        bytes32 o2Hash = getMessageHash(o2);
+        
+        bytes32 buyerHash = getMessageHash(buyer);
+        bytes32 sellerHash = getMessageHash(seller);
 
         // Verify the order of hashes (Verifier signatures are for the orders submitted and signed by the order.creator)
-        require(verify(o1Hash, o1), "Order 1 could not be verified");
-        require(verify(o2Hash, o2), "Order 2 could not be verified");
-
-        uint256 o1Price = o1.orderType == OrderType.BUY ? (o1.releaseAmount * 10**5)/o1.requestAmount : (o1.requestAmount * 10**5)/o1.releaseAmount;
-        uint256 o2Price = o2.orderType == OrderType.BUY ? (o2.releaseAmount * 10**5)/o2.requestAmount : (o2.requestAmount * 10**5)/o2.releaseAmount;
-        require(o1.orderType == OrderType.BUY ? o1Price >= o2Price : o1Price <= o2Price, "Maker price is worse than taker price");
+        require(verify(buyerHash, buyer), "Buy order could not be verified");
+        require(verify(sellerHash, seller), "Sell order could not be verified");
 
 
-        // Calculates on o1 < o2
-        uint256 o1EffectiveRequestAmount = o1.requestAmount;
-        uint256 o2EffectiveRequestAmount = o1.releaseAmount;
+        require(buyer.price >= seller.price, "Buy price is less than sell price");
 
-        // Calculates to o1 > o2
-        if (o1.orderType == OrderType.BUY ? o1.requestAmount > o2.releaseAmount : o1.releaseAmount > o2.requestAmount) {
-            o1EffectiveRequestAmount = o1.orderType == OrderType.BUY ? o2.releaseAmount : o2.releaseAmount * o1Price / o2Price;
-            o2EffectiveRequestAmount = o1.orderType == OrderType.BUY ? o2.requestAmount * o1Price / o2Price : o2.requestAmount;
-        }
+        //redundant checks of fills, is already checked in indirectly by total amount calculation, but checking pre-calculation
+        require(buyer.amount > orderHashFill[buyerHash], "Buy order is filled");
+        require(seller.amount > orderHashFill[sellerHash], "Sell order is filled");
 
-        // check hash already settled
-        require(o1.orderType == OrderType.BUY ? orderHashFill[o1Hash] + o1EffectiveRequestAmount <= o1.requestAmount : orderHashFill[o1Hash] + o2EffectiveRequestAmount <= o1.releaseAmount, "Order 1 was settled before");
-        require(o2.orderType == OrderType.BUY ? orderHashFill[o2Hash] + o2EffectiveRequestAmount <= o2.requestAmount : orderHashFill[o2Hash] + o1EffectiveRequestAmount <= o2.releaseAmount, "Order 2 was settled before");
-        
-        // Calculate fee for settler
+        uint256 buyerAmount = calculateRemainingSettleAmount(buyer, buyerHash);
+        uint256 sellerAmount = calculateRemainingSettleAmount(seller, sellerHash);
+        uint256 totalAmount = buyerAmount > sellerAmount ? sellerAmount : buyerAmount;
+        uint256 totalPrice = isBuyerMaker ? totalAmount * buyer.price : totalAmount * seller.price;
+
+        require(totalAmount > buyer.minSettleAmount, "Total amount to settle is lt minSettleAmount of buyer");
+        require(totalAmount > seller.minSettleAmount, "Total amount to settle is lt minSettleAmount of Asker(taker)");
+
+        require(totalPrice <= balances[buyer.creator][buyer.basePair] * precision, "Buyer does not have enough assets to buy");
+        require(totalAmount <= balances[seller.creator][seller.tradedPair], "Seller does not have enough assets to sell");
+        console.log(balances[buyer.creator][buyer.basePair] * precision);
+
         uint feeNumerator = 1;
         uint feeDenominator = 100;
 
-        uint256 o1Fee = (o2EffectiveRequestAmount * feeNumerator) / feeDenominator;
-        uint256 o2Fee = (o1EffectiveRequestAmount * feeNumerator) / feeDenominator;
+        uint256 basePairFee = (totalPrice * feeNumerator) / feeDenominator;
+        uint256 tradedPairFee = (totalAmount * feeNumerator) / feeDenominator;
 
-        // Update balances of o1.creator
-        balances[o1.creator][o1.releasedToken] -= o2EffectiveRequestAmount;
-        balances[o1.creator][o1.requestedToken] += (o1EffectiveRequestAmount - o2Fee);
+        balances[buyer.creator][buyer.basePair] -= totalPrice / precision;
+        balances[seller.creator][seller.tradedPair] -= totalAmount;
 
-        // Update balances of o2.creator
-        balances[o2.creator][o2.releasedToken] -= o1EffectiveRequestAmount;
-        balances[o2.creator][o2.requestedToken] += (o2EffectiveRequestAmount - o1Fee);
-        
+        balances[buyer.creator][buyer.tradedPair] += totalAmount - tradedPairFee;
+        balances[seller.creator][seller.basePair] += (totalPrice - basePairFee) / precision;
 
-        // Deposit fee to settler
-        balances[o1.settler][o1.releasedToken] += o1Fee;
-        balances[o2.settler][o2.releasedToken] += o2Fee;
+        balances[buyer.settler][buyer.basePair] += basePairFee / precision;
+        balances[seller.settler][seller.tradedPair] += tradedPairFee;
 
-        orderHashFill[o1Hash] += o1.orderType == OrderType.BUY ? o1EffectiveRequestAmount : o2EffectiveRequestAmount;
-        orderHashFill[o2Hash] += o2.orderType == OrderType.BUY ? o2EffectiveRequestAmount : o1EffectiveRequestAmount;
-
+        orderHashFill[buyerHash] += totalAmount;
+        orderHashFill[sellerHash] += totalAmount;
     }
 
     function balanceOf(address account, address token) external view returns (uint256) {
@@ -242,10 +250,10 @@ contract Settler {
                 order.settler,
                 order.orderType,
                 order.basePair,
-                order.requestedToken,
-                order.releasedToken,
-                order.requestAmount,
-                order.releaseAmount,
+                order.tradedPair,
+                order.minSettleAmount,
+                order.amount,
+                order.price,
                 order.creationTime,
                 order.expirationTime,
                 order.randNonce
